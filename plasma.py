@@ -1,0 +1,477 @@
+import colorsys
+import math
+import sys
+import random
+import numpy as np
+import pygame as pg
+
+
+class PlasmaEffect:
+	def __init__(self, width=320, height=200):
+		self.width = width
+		self.height = height
+
+		self.time = 0.0
+		self.speed = 1.0
+		self.palette_speed = 180.0
+		self.intensity = 1.6
+
+		self.surface = pg.Surface((width, height))
+
+		# pygame.surfarray käyttää järjestystä width × height.
+		x = np.arange(width, dtype=np.float32)[:, None]
+		y = np.arange(height, dtype=np.float32)[None, :]
+
+		self.x = x
+		self.y = y
+
+		center_x = width * 0.5
+		center_y = height * 0.5
+
+		self.distance = np.sqrt(
+			(x - center_x) ** 2 +
+			(y - center_y) ** 2
+		)
+
+		self.palette_hold_time = 5.0
+		self.palette_transition_time = 2.0
+
+		self.palettes = [
+			self.create_duotone_palette(
+				(0, 0, 255),
+				(20, 20, 50),
+			),
+			self.create_duotone_palette(
+				(255, 0, 0),
+				(50, 20, 20),
+			),
+			self.create_duotone_palette(
+				(255, 255, 20),
+				(50, 50, 20),
+			),
+			self.create_duotone_palette(
+				(15, 0, 90),
+				(255, 0, 180),
+			),
+			self.create_duotone_palette(
+				(0, 30, 120),
+				(0, 255, 210),
+			),
+			self.create_duotone_palette(
+				(120, 0, 20),
+				(255, 180, 0),
+			),
+			self.create_duotone_palette(
+				(20, 100, 0),
+				(180, 255, 20),
+			),
+			self.create_grayscale_palette(levels=16),
+			self.create_rainbow_palette(levels=32),
+			self.create_rainbow_palette(levels=255),
+		]
+
+		self.palette = random.choice(self.palettes)
+		pg.font.init()
+
+		self.scroller_font = pg.font.Font(
+			"scroller.ttf",
+			26,
+		)
+
+		self.scroller_text = (
+			"   LOREM IPSUM DOLOR SIT AMET - "
+			"CONSECTETUR ADIPISCING ELIT - "
+			"GREETINGS TO ALL DEMOSCENE FRIENDS - "
+			"KUDOS TO THE OLD SCHOOL CODERS AND TRACKER MUSICIANS - "
+			"STAY TUNED FOR MORE PSYCHEDELIC VISIONS   ***   "
+		)
+
+		# Arvot ovat sisäisen 320 × 200 -resoluution pikseleitä.
+		self.scroller_base_y = 150
+		self.scroller_amplitude = 18.0
+		self.scroller_wavelength = 92.0
+		self.scroller_wave_speed = 2.0
+		self.scroller_speed = 42.0
+		self.scroller_letter_spacing = 1
+		self.scroller_gap = 80
+
+		self.scroller_glyphs, self.scroller_width = (
+			self.create_scroller_glyphs(self.scroller_text)
+		)
+
+	def create_grayscale_palette(self, levels=16):
+		palette = np.zeros((256, 3), dtype=np.uint8)
+
+		for i in range(256):
+			phase = i / 255.0
+			value = 0.5 - 0.5 * math.cos(phase * math.tau)
+			value = int(value * 255)
+
+			if levels > 1:
+				step = 255 / (levels - 1)
+				value = int(round(value / step) * step)
+
+			palette[i] = (
+				value,
+				value,
+				value,
+			)
+
+		return palette
+
+	def create_duotone_palette(self, color_a, color_b):
+		palette = np.zeros((256, 3), dtype=np.uint8)
+
+		for i in range(256):
+			phase = i / 255.0
+
+			# Väri A -> väri B -> väri A.
+			mix = 0.5 - 0.5 * math.cos(phase * math.tau)
+
+			for channel in range(3):
+				value = (
+						color_a[channel] * (1.0 - mix) +
+						color_b[channel] * mix
+				)
+
+				palette[i, channel] = int(value)
+
+		return palette
+
+	def create_rainbow_palette(self, levels=256):
+		palette = np.zeros((256, 3), dtype=np.uint8)
+
+		for i in range(256):
+			bucket = int(i * levels / 256) % levels
+			hue = bucket / levels
+
+			r, g, b = colorsys.hsv_to_rgb(
+				hue,
+				1.0,  # saturation
+				1.0,  # brightness
+			)
+
+			palette[i] = (
+				int(r * 255),
+				int(g * 255),
+				int(b * 255),
+			)
+
+		return palette
+
+	def get_current_palette(self):
+		cycle_length = (
+				self.palette_hold_time +
+				self.palette_transition_time
+		)
+
+		cycle_index = int(self.time // cycle_length)
+
+		current_index = cycle_index % len(self.palettes)
+		next_index = (current_index + 1) % len(self.palettes)
+
+		cycle_time = self.time % cycle_length
+
+		if cycle_time < self.palette_hold_time:
+			return self.palettes[current_index]
+
+		blend = (
+						cycle_time - self.palette_hold_time
+				) / self.palette_transition_time
+
+		# Pehmeä smoothstep-siirtymä.
+		blend = blend * blend * (3.0 - 2.0 * blend)
+
+		current_palette = self.palettes[current_index].astype(np.float32)
+		next_palette = self.palettes[next_index].astype(np.float32)
+
+		palette = (
+				current_palette * (1.0 - blend) +
+				next_palette * blend
+		)
+
+		return palette.astype(np.uint8)
+
+	def create_scroller_glyphs(self, text):
+		glyphs = []
+		total_width = 0
+
+		for character in text:
+			metal, shadow, width = self.create_metallic_glyph(
+				character,
+			)
+
+			glyphs.append(
+				(
+					metal,
+					shadow,
+					width,
+				)
+			)
+
+			total_width += (
+					width +
+					self.scroller_letter_spacing
+			)
+
+		return glyphs, total_width
+
+	def create_metallic_glyph(self, character):
+		if character == " ":
+			width = max(
+				1,
+				self.scroller_font.size(" ")[0],
+			)
+
+			return None, None, width
+
+		mask = self.scroller_font.render(
+			character,
+			True,
+			(255, 255, 255),
+		).convert_alpha()
+
+		if not isinstance(mask, pg.Surface):
+			raise TypeError(
+				f"Expected pygame.Surface, got {type(mask)!r}"
+			)
+
+		width, height = mask.get_size()
+
+		if width <= 0 or height <= 0:
+			return None, None, 1
+
+		metal = pg.Surface(
+			(width, height),
+			pg.SRCALPHA,
+			32,
+		)
+
+		for y in range(height):
+			position = y / max(
+				1,
+				height - 1,
+			)
+
+			brightness = (
+					0.46
+					+ math.sin(
+				position * math.tau * 2.0 - 0.8
+			) * 0.28
+					+ math.sin(
+				position * math.tau * 5.0 + 0.6
+			) * 0.16
+			)
+
+			brightness = max(
+				0.0,
+				min(1.0, brightness),
+			)
+
+			value = int(
+				28 + brightness * 227
+			)
+
+			pg.draw.line(
+				metal,
+				(
+					value,
+					min(255, value + 5),
+					min(255, value + 14),
+					255,
+				),
+				(0, y),
+				(width - 1, y),
+			)
+
+		# Käytetään tekstin alpha-kanavaa metallipinnan alpha-kanavana.
+		mask_alpha = pg.surfarray.array_alpha(mask)
+
+		metal_alpha = pg.surfarray.pixels_alpha(metal)
+		metal_alpha[:] = mask_alpha
+		del metal_alpha
+
+		shadow = pg.Surface(
+			(width, height),
+			pg.SRCALPHA,
+			32,
+		)
+
+		shadow_alpha = pg.surfarray.pixels_alpha(shadow)
+		shadow_alpha[:] = (
+				mask_alpha.astype(np.uint16) * 180 // 255
+		).astype(np.uint8)
+		del shadow_alpha
+
+		return metal, shadow, width
+
+	def draw_scroller_copy(self, target, start_x):
+		cursor_x = float(start_x)
+
+		for metal, shadow, glyph_width in self.scroller_glyphs:
+			center_x = cursor_x + glyph_width * 0.5
+
+			phase = (
+					center_x / self.scroller_wavelength * math.tau +
+					self.time * self.scroller_wave_speed
+			)
+
+			center_y = (
+					self.scroller_base_y +
+					math.sin(phase) * self.scroller_amplitude
+			)
+
+			if metal is not None:
+				x = int(cursor_x)
+				y = int(center_y - metal.get_height() * 0.5)
+
+				if x + glyph_width >= 0 and x < target.get_width():
+					# Tumma yhden pikselin varjo.
+					target.blit(
+						shadow,
+						(x + 1, y + 2),
+					)
+
+					target.blit(
+						metal,
+						(x, y),
+					)
+
+			cursor_x += (
+					glyph_width +
+					self.scroller_letter_spacing
+			)
+
+	def draw_scroller(self, target):
+		cycle_width = (
+				self.scroller_width +
+				self.scroller_gap
+		)
+
+		distance = (
+				self.time *
+				self.scroller_speed
+		)
+
+		# Teksti alkaa oikealta ja liikkuu vasemmalle.
+		first_x = (
+				self.width -
+				(distance % cycle_width) -
+				cycle_width
+		)
+
+		x = first_x
+
+		while x < self.width:
+			self.draw_scroller_copy(
+				target,
+				x,
+			)
+
+			x += cycle_width
+
+	def start(self):
+		self.time = 0.0
+
+	def update(self, dt, audio=None):
+		self.time += dt * self.speed
+
+		# Myöhemmin tähän voidaan syöttää musiikin kick-arvo 0.0–1.0.
+		if audio is not None:
+			kick = getattr(audio, "kick", 0.0)
+			self.intensity = 1.0 + kick * 0.35
+		else:
+			self.intensity += (1.0 - self.intensity) * min(1.0, dt * 4.0)
+
+	def render(self, target):
+		t = self.time
+
+		plasma = (
+				np.sin(self.x * 0.045 + t * 1.30) +
+				np.sin(self.y * 0.060 - t * 1.10) +
+				np.sin((self.x + self.y) * 0.035 + t * 0.75) +
+				np.sin(self.distance * 0.080 - t * 1.65)
+		)
+
+		plasma *= self.intensity
+
+		indexes = ((plasma + 4.0) * 31.875).astype(np.int16)
+
+		palette_offset = int(t * self.palette_speed)
+		indexes = (indexes + palette_offset) & 255
+
+		palette = self.get_current_palette()
+		rgb = palette[indexes]
+
+		pg.surfarray.blit_array(
+			self.surface,
+			rgb,
+		)
+
+		# Teksti piirretään matalaresoluutioiseen plasmapintaan.
+		self.draw_scroller(self.surface)
+
+		scaled = pg.transform.scale(
+			self.surface,
+			target.get_size(),
+		)
+
+		target.blit(
+			scaled,
+			(0, 0),
+		)
+
+	def stop(self):
+		pass
+
+
+def main():
+	pg.init()
+
+	screen = pg.display.set_mode(
+		(1280, 800),
+		pg.RESIZABLE,
+	)
+
+	pg.display.set_caption("Retro Plasma")
+
+	clock = pg.time.Clock()
+	plasma = PlasmaEffect(320, 200)
+	plasma.start()
+
+	running = True
+
+	while running:
+		dt = clock.tick(60) / 1000.0
+
+		for event in pg.event.get():
+			if event.type == pg.QUIT:
+				running = False
+
+			elif event.type == pg.KEYDOWN:
+				if event.key == pg.K_ESCAPE:
+					running = False
+
+				elif event.key == pg.K_UP:
+					plasma.speed += 0.1
+
+				elif event.key == pg.K_DOWN:
+					plasma.speed = max(0.1, plasma.speed - 0.1)
+
+				elif event.key == pg.K_RIGHT:
+					plasma.palette_speed += 5.0
+
+				elif event.key == pg.K_LEFT:
+					plasma.palette_speed -= 5.0
+
+		plasma.update(dt)
+		plasma.render(screen)
+
+		pg.display.flip()
+
+	pg.quit()
+	sys.exit()
+
+
+if __name__ == "__main__":
+	main()
