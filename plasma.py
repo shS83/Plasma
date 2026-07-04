@@ -210,7 +210,7 @@ class PlasmaEffect:
 		total_width = 0
 
 		for character in text:
-			mask, outline, shadow, width = self.create_metallic_glyph(
+			mask, outline, shadow, width = self.create_glyph(
 				character,
 			)
 
@@ -240,7 +240,7 @@ class PlasmaEffect:
 						(x + ox, y + oy),
 					)
 
-	def create_metallic_glyph(self, character):
+	def create_glyph(self, character):
 		if character == " ":
 			width = max(
 				1,
