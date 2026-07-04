@@ -16,7 +16,6 @@ class PlasmaEffect:
 		self.speed = 1.0
 		self.palette_speed = 180.0
 		self.intensity = 1.6
-
 		self.surface = pg.Surface((width, height))
 
 		# pygame.surfarray käyttää järjestystä width × height.
@@ -86,9 +85,9 @@ class PlasmaEffect:
 			"  HAILS TO FAIRLIGHT :: FARBRAUSCH :: NEURO ::  "
 			"RAZOR1911 :: SPACEBALLS :: ANDROMEDA SOFTWARE DEVELOPMENT :: "
 			"KEWLERZ       JUST TO MENTION A FEW ... YOU KNOW WHO YOU ARE     "
-			"GREETINGS TO ALL DEMOSCENE FRIENDS - "
 			"KUDOS TO THE OG CODERS AND TRACKER MUSICIANS - "
-			"STAY TUNED FOR MORE PSYCHEDELIC VISIONS   ***   "
+			"STAY TUNED FOR MORE PSYCHEDELIC VISIONS   "
+			"CONCEIVED, DIRECTED AND MUSIC BY PROMETHEUS -- CODE FORGED WITH THE CHATGPT GREMLIN ***   "
 		)
 
 		# Arvot ovat sisäisen 320 × 200 -resoluution pikseleitä.
@@ -106,6 +105,8 @@ class PlasmaEffect:
 		self.scroller_rainbow_wavelength = 300.0
 		self.scroller_rainbow_speed = 0.18
 		self.scroller_rainbow_levels = 32
+		self.scroller_outline_thickness = 2
+		self.scroller_outline_alpha = 220
 
 		self.scroller_glyphs, self.scroller_width = (
 			self.create_scroller_glyphs(self.scroller_text)
@@ -209,24 +210,35 @@ class PlasmaEffect:
 		total_width = 0
 
 		for character in text:
-			metal, shadow, width = self.create_metallic_glyph(
+			mask, outline, shadow, width = self.create_metallic_glyph(
 				character,
 			)
 
 			glyphs.append(
 				(
-					metal,
+					mask,
+					outline,
 					shadow,
 					width,
 				)
 			)
 
-			total_width += (
-					width +
-					self.scroller_letter_spacing
-			)
+			total_width += width + self.scroller_letter_spacing
 
 		return glyphs, total_width
+
+	def draw_outline(self, target, outline, x, y, thickness):
+		for oy in range(-thickness, thickness + 1):
+			for ox in range(-thickness, thickness + 1):
+				if ox == 0 and oy == 0:
+					continue
+
+				# Vähän pyöreämpi reuna kuin pelkkä neliö.
+				if ox * ox + oy * oy <= thickness * thickness + 0.5:
+					target.blit(
+						outline,
+						(x + ox, y + oy),
+					)
 
 	def create_metallic_glyph(self, character):
 		if character == " ":
@@ -234,8 +246,7 @@ class PlasmaEffect:
 				1,
 				self.scroller_font.size(" ")[0],
 			)
-
-			return None, None, width
+			return None, None, None, width
 
 		mask = self.scroller_font.render(
 			character,
@@ -246,16 +257,29 @@ class PlasmaEffect:
 		width, height = mask.get_size()
 
 		if width <= 0 or height <= 0:
-			return None, None, 1
+			return None, None, None, 1
 
-		# Musta puoliläpinäkyvä varjo.
-		shadow = pg.Surface(
+		mask_alpha = pg.surfarray.array_alpha(mask)
+
+		# Musta outline-surface
+		outline = pg.Surface(
 			(width, height),
 			pg.SRCALPHA,
 			32,
 		).convert_alpha()
 
-		mask_alpha = pg.surfarray.array_alpha(mask)
+		outline_alpha = pg.surfarray.pixels_alpha(outline)
+		outline_alpha[:] = (
+				mask_alpha.astype(np.uint16) * self.scroller_outline_alpha // 255
+		).astype(np.uint8)
+		del outline_alpha
+
+		# Musta hieman läpinäkyvä varjo
+		shadow = pg.Surface(
+			(width, height),
+			pg.SRCALPHA,
+			32,
+		).convert_alpha()
 
 		shadow_alpha = pg.surfarray.pixels_alpha(shadow)
 		shadow_alpha[:] = (
@@ -263,8 +287,7 @@ class PlasmaEffect:
 		).astype(np.uint8)
 		del shadow_alpha
 
-		# Palautetaan itse maski, ei enää valmista metallipintaa.
-		return mask, shadow, width
+		return mask, outline, shadow, width
 
 	def create_rainbow_text_surface(self, mask, ribbon_x):
 		width, height = mask.get_size()
@@ -333,7 +356,7 @@ class PlasmaEffect:
 		cursor_x = float(start_x)
 		ribbon_x = 0.0
 
-		for mask, shadow, glyph_width in self.scroller_glyphs:
+		for mask, outline, shadow, glyph_width in self.scroller_glyphs:
 			center_x = cursor_x + glyph_width * 0.5
 
 			phase = (
@@ -356,21 +379,28 @@ class PlasmaEffect:
 						ribbon_x,
 					)
 
+					# 1) musta reunus
+					self.draw_outline(
+						target,
+						outline,
+						x,
+						y,
+						self.scroller_outline_thickness,
+					)
+
+					# 2) varjo
 					target.blit(
 						shadow,
 						(x + 1, y + 2),
 					)
 
+					# 3) varsinainen värillinen glyph
 					target.blit(
 						rainbow,
 						(x, y),
 					)
 
-			advance = (
-					glyph_width +
-					self.scroller_letter_spacing
-			)
-
+			advance = glyph_width + self.scroller_letter_spacing
 			cursor_x += advance
 			ribbon_x += advance
 
@@ -430,8 +460,8 @@ class PlasmaEffect:
 
 		indexes = ((plasma + 4.0) * 31.875).astype(np.int16)
 
-		palette_offset = int(t * self.palette_speed)
-		indexes = (indexes + palette_offset) & 255
+		palette_offset = int(t * self.palette_speed) % 256
+		indexes = ((indexes.astype(np.int32) + palette_offset) % 256).astype(np.uint8)
 
 		palette = self.get_current_palette()
 		rgb = palette[indexes]
@@ -460,7 +490,9 @@ class PlasmaEffect:
 
 def main():
 	pg.init()
-
+	pg.mixer.init()
+	pg.mixer.music.load("./doomscroller.ogg")
+	pg.mixer.music.play(-1)
 	screen = pg.display.set_mode(
 		(1280, 800),
 		pg.RESIZABLE,
